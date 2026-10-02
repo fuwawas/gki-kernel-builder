@@ -1,0 +1,226 @@
+name: Build GKI Kernel (Droidspaces)
+
+on:
+  workflow_dispatch:
+    inputs:
+      android_version:
+        description: 'Android 内核分支前缀'
+        required: true
+        default: 'android14'
+        type: choice
+        options: [android14, android15, android16, android17]
+      kernel_version:
+        description: '内核主线版本'
+        required: true
+        default: '6.1'
+        type: choice
+        options: ['6.1', '6.6', '6.12', '6.18']
+      sub_level:
+        description: '子版本号，必须与手机当前内核一致（6.1 常用: 138/157/162/172）'
+        required: true
+        default: '157'
+      ksu_variant:
+        description: '内置 root 方案'
+        required: true
+        default: 'ReSukiSU'
+        type: choice
+        options: [ReSukiSU, None, Official]
+      droidspaces:
+        description: 'Droidspaces 槽位（6.12/6.18 请选 on）'
+        required: true
+        default: '678'
+        type: choice
+        options: ['678', '123', '345', 'off', 'on']
+      cve_patch:
+        description: 'CVE-2026-43499 rtmutex 修复链'
+        required: false
+        default: true
+        type: boolean
+      use_zram:
+        description: 'ZRAM LZ4KD 增强（实验性，6.12/6.18 会被自动关闭）'
+        required: false
+        default: false
+        type: boolean
+      use_kpm:
+        description: 'KPM 模块支持（需非 None 的 KSU 变体）'
+        required: false
+        default: false
+        type: boolean
+      lto_mode:
+        description: 'LTO 模式 none 最快(约20-40分钟,体积大) / thin 默认(约60-150分钟) / full 最慢'
+        required: true
+        default: 'none'
+        type: choice
+        options: [none, thin, full]
+      custom_version:
+        description: '自定义内核版本名（留空自动生成，不宜过长）'
+        required: false
+        default: ''
+      source_tag:
+        description: 'GKI-Kernel-Source_Fetch 的 Release tag'
+        required: true
+        default: 'all-full-kernel-sources-20260821-32436876080'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    env:
+      AV: ${{ inputs.android_version }}
+      KV: ${{ inputs.kernel_version }}
+      SUB: ${{ inputs.sub_level }}
+      SRC_REPO: 404-GCross/GKI-Kernel-Source_Fetch
+      SRC_TAG: ${{ inputs.source_tag }}
+      LTO_MODE: ${{ inputs.lto_mode }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+          sudo apt-get clean 2>/dev/null || true
+          df -h /
+
+      - name: Add swap (avoid OOM during LTO)
+        run: |
+          # runner 镜像可能已占用 /swapfile，先释放再用；任何一步失败都不阻断编译
+          sudo swapoff -a 2>/dev/null || true
+          sudo rm -f /swapfile 2>/dev/null || true
+          sudo fallocate -l 8G /swapfile 2>/dev/null \
+            || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192 status=none
+          sudo chmod 600 /swapfile || true
+          sudo mkswap /swapfile || true
+          sudo swapon /swapfile || echo "::warning::swap 启用失败，继续编译（OOM 风险上升）"
+          free -h || true
+          df -h / || true
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            git curl make gcc g++ build-essential libssl-dev \
+            bison flex libelf-dev dwarves ccache python3 \
+            clang lld bc rsync cpio perl patch zip gawk zstd unzip
+          clang --version
+          ccache --max-size=2G
+
+      - name: Download GKI kernel source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/kdl"
+          PATTERN="kernel-full-source-${AV}-${KV}-${SUB}*"
+          echo "::group::Listing matching release assets"
+          gh api "repos/${SRC_REPO}/releases/tags/${SRC_TAG}" \
+            --jq '.assets[].name' | grep -i "^kernel-full-source-${AV}-${KV}-${SUB}" || true
+          echo "::endgroup::"
+
+          if ! gh release download "${SRC_TAG}" --repo "${SRC_REPO}" \
+               --pattern "$PATTERN" --dir "$RUNNER_TEMP/kdl"; then
+            echo "::error::下载失败，以下是该 Release 中可用的源码包前缀（前 40 条）"
+            gh api "repos/${SRC_REPO}/releases/tags/${SRC_TAG}" --jq '.assets[].name' | head -40
+            exit 1
+          fi
+
+          ls -lh "$RUNNER_TEMP/kdl"
+
+          # 只合并 .partNNN 分卷，必须排除 manifest/xml/json/sha256 等同名伴随文件
+          mapfile -t PARTS < <(ls -1v "$RUNNER_TEMP"/kdl/* | grep -E '\.part[0-9]+$')
+          if [ ${#PARTS[@]} -eq 0 ]; then
+            echo "::error::未找到任何 .partN 分卷文件"
+            ls -lh "$RUNNER_TEMP/kdl"
+            exit 1
+          fi
+          echo "合并顺序: ${PARTS[*]}"
+          cat "${PARTS[@]}" > "$RUNNER_TEMP/kernel.tar.zst"
+          ls -lh "$RUNNER_TEMP/kernel.tar.zst"
+
+      - name: Extract kernel source
+        run: |
+          set -euo pipefail
+          # zstd 文件魔数为 28 B5 2F FD，先校验再解压，避免解压阶段才报错
+          MAGIC=$(head -c 4 "$RUNNER_TEMP/kernel.tar.zst" | od -An -tx1 | tr -d ' \n')
+          if [ "$MAGIC" != "28b52ffd" ]; then
+            echo "::error::合并后的文件不是有效的 zstd (magic=$MAGIC)，分卷合并顺序或内容有误"
+            exit 1
+          fi
+          echo "zstd 魔数校验通过"
+
+          SRC="$GITHUB_WORKSPACE/kernel-source"
+          mkdir -p "$SRC"
+          tar -I zstd -xf "$RUNNER_TEMP/kernel.tar.zst" -C "$SRC"
+
+          # 若解压后只有单个顶层目录，则下沉一级
+          shopt -s dotglob nullglob
+          items=("$SRC"/*)
+          if [ ${#items[@]} -eq 1 ] && [ -d "${items[0]}" ]; then
+            SRC="${items[0]}"
+          fi
+          shopt -u dotglob nullglob
+
+          if [ ! -d "$SRC/common" ] && [ ! -f "$SRC/Makefile" ]; then
+            echo "::error::解压后未找到 common/ 或 Makefile"
+            find "$GITHUB_WORKSPACE/kernel-source" -maxdepth 2 | head -30
+            exit 1
+          fi
+          echo "KERNEL_SRC=$SRC" >> "$GITHUB_ENV"
+          echo "源码路径: $SRC"
+          ls "$SRC" | head -20
+
+      - name: Generate build config
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/build/out"
+          mkdir -p "$OUT"
+          cat > "$GITHUB_WORKSPACE/.build_config" << EOF
+          APP_LANG="zh"
+          ANDROID_VERSION="${AV}"
+          KERNEL_VERSION="${KV}"
+          SUB_LEVEL="${SUB}"
+          OS_PATCH_LEVEL=""
+          REVISION=""
+          KSU_VARIANT="${{ inputs.ksu_variant }}"
+          KSU_BRANCH="Stable(标准)"
+          CUSTOM_VERSION="${{ inputs.custom_version }}"
+          BUILD_TIME=""
+          USE_ZRAM="${{ inputs.use_zram }}"
+          USE_KPM="${{ inputs.use_kpm && 'enabled' || 'disabled' }}"
+          USE_REKERNEL="false"
+          CVE_2026_43499_PATCH="${{ inputs.cve_patch }}"
+          DROIDSPACES="${{ inputs.droidspaces }}"
+          KERNEL_SOURCE="${KERNEL_SRC}"
+          KERNEL_SOURCE_TARBALL=""
+          OUTPUT_DIR="${OUT}"
+          PACKAGE_BOOT="true"
+          EOF
+          # 去掉 heredoc 缩进
+          sed -i 's/^[[:space:]]*//' "$GITHUB_WORKSPACE/.build_config"
+          chmod +x build_kernel.sh
+          cat "$GITHUB_WORKSPACE/.build_config"
+
+      - name: Build kernel
+        run: |
+          ./build_kernel.sh --quick < /dev/null
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          find "$GITHUB_WORKSPACE/build/out" -maxdepth 2 \
+            \( -name "*.zip" -o -name "Image" -o -name "Image.gz" -o -name "Image.lz4" \) \
+            -exec cp -v {} "$GITHUB_WORKSPACE/artifacts/" \; 2>/dev/null || true
+          ls -lh "$GITHUB_WORKSPACE/artifacts"
+
+      - name: Upload AnyKernel3 zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: gki-${{ env.AV }}-${{ env.KV }}-${{ env.SUB }}-${{ inputs.ksu_variant }}
+          path: artifacts/*
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,0 +1,86 @@
+# Claude Code
+.claude/
+
+# Gemini
+.gemini/
+
+# IDE & Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Build outputs
+*.o
+*.ko
+*.mod.c
+*.mod
+*.cmd
+*.order
+*.symvers
+*.tmp
+*.log
+
+# Kernel build artifacts
+out/
+Image
+Image.gz
+Image.lz4
+*.img
+*.zip
+
+# Temporary files
+*.temp
+*.bak
+*.orig
+*.rej
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Node.js (if any tooling)
+node_modules/
+
+# Local build artifacts
+build/
+
+git-repo/
+susfs4ksu/
+kernel_patches/
+SukiSU_patch/
+Action-Build/
+AnyKernel3/
+bootimgs/
+patch-rejects/
+.build_config
+
+# Toolchain
+gcc/
+
+# Cache
+.ccache/
+.cache/
+
+# Environment / secrets (prevent accidental commits)
+.env*
+*.pem
+*credentials*
+*secret*
+
+# 注意：不要忽略 .github/workflows 下的 yml，
+# 否则 GitHub Actions 工作流不会进仓库，云端编译完全跑不起来
+!/.github/workflows/*.yml
+参考项目
