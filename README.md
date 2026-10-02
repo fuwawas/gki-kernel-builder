@@ -42,9 +42,18 @@ Linux version 6.1.138-android14-11-...
 
 ### 第 1 步：把本仓库 Fork 到你自己的 GitHub 账号
 
-点本页右上角 **Fork** 按钮。
+点本页右上角 **Fork** 按钮，其余全部保持默认（**仓库名别改**，改了脚本找不到）。
 
 > 为什么必须 Fork：编译是在 GitHub Actions 上跑的，得用**你自己账号下**的仓库，否则没有权限启动任务。
+
+#### ⚠️ Fork 之后必须手动开一次 Actions（不做这步一定失败）
+
+GitHub 对 fork 来的仓库**默认禁用 Actions**，不手动开启的话，脚本会卡住或报 workflow 找不到。
+
+操作：打开你自己仓库的 **Actions** 标签页 → 看到黄色提示条 → 点绿色按钮
+**「I understand my workflows, go ahead and enable them」**。
+
+只做一次，之后再编译就不用管了。
 
 ### 第 2 步：安装并登录 gh
 
@@ -71,13 +80,16 @@ Linux version 6.1.138-android14-11-...
 
 ## 二、用 Linux / WSL 的朋友
 
-不用 Fork，不用 gh，直接一条命令：
+本地编译不用 Fork，也不用 gh，直接一条命令：
 
 ```bash
-curl -sL -o gkibuild.sh https://raw.githubusercontent.com/<你的用户名>/gki-kernel-builder/main/gkibuild.sh
+curl -sL -o gkibuild.sh https://raw.githubusercontent.com/fuwawas/gki-kernel-builder/main/gkibuild.sh
 chmod +x gkibuild.sh
 ./gkibuild.sh
 ```
+
+> 国内网络拉不动 `raw.githubusercontent.com` 的话，用镜像：
+> `https://ghproxy.net/https://raw.githubusercontent.com/fuwawas/gki-kernel-builder/main/gkibuild.sh`
 
 不带参数运行会进交互式向导：选大版本 → 选子版本 → 选 root → 选槽位 → 编译。
 
@@ -152,6 +164,13 @@ PowerShell 里执行 `gh auth login`。
 **Q：提示找不到仓库？**
 回主菜单选 `5`，确认显示的仓库名是你自己的（如 `zhangsan/gki-kernel-builder`）。
 如果 Fork 时改了名字，手动填正确的。
+
+**Q：脚本触发了，但 Actions 页面一片空白 / 一直不跑？**
+回到第 1 步，Fork 后没有手动启用 Actions。去 Actions 标签页点那个绿色按钮启用即可。
+
+**Q：显示 403 / Resource not accessible？**
+说明你 gh 登录的账号和 Fork 到的账号不是同一个，或者仓库是私有可见性。
+`gh auth status` 看当前登录账号。
 
 **Q：编译要多久？**
 云端约 45-60 分钟。跑完在 Actions 页面底部 Artifacts 下载。
