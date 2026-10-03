@@ -224,3 +224,92 @@ jobs:
           path: artifacts/*
           if-no-files-found: warn
           retention-days: 30
+
+      # 纯展示步骤：跑完在 Actions 页面直接给出 param 回显和复制即用的刷机命令
+      # 不会影响上面的编译结果（if: always()），也不会改变任何产物
+      - name: Generate build summary
+        if: always()
+        run: |
+          set +e
+          SLOT="${{ inputs.droidspaces }}"
+          KSU="${{ inputs.ksu_variant }}"
+          CVE_S="${{ inputs.cve_patch }}"
+          ZRAM_S="${{ inputs.use_zram }}"
+          KPM_S="${{ inputs.use_kpm }}"
+          ART="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          IMG_SIZE="unknown"
+          ZIP_SIZE="unknown"
+          if [ -f "$GITHUB_WORKSPACE/artifacts/Image" ]; then
+            IMG_SIZE=$(du -h "$GITHUB_WORKSPACE/artifacts/Image" 2>/dev/null | cut -f1)
+          fi
+          ZIP_FILE=$(find "$GITHUB_WORKSPACE/artifacts" -maxdepth 1 -name "*.zip" 2>/dev/null | head -1)
+          if [ -n "$ZIP_FILE" ]; then
+            ZIP_SIZE=$(du -h "$ZIP_FILE" 2>/dev/null | cut -f1)
+          fi
+
+          {
+            echo "## GKI 内核编译完成"
+            echo ""
+            echo "### 编译参数回显"
+            echo ""
+            echo '| 项目 | 值 |'
+            echo '|---|---|'
+            echo "| 目标版本 | \`${AV}-${KV}-${SUB}\` |"
+            echo "| root 方案 | \`${KSU}\` |"
+            echo "| Droidspaces 槽位 | \`${SLOT}\` |"
+            echo "| CVE-2026-43499 修复链 | \`${CVE_S}\` |"
+            echo "| ZRAM LZ4KD | \`${ZRAM_S}\` |"
+            echo "| KPM 模块支持 | \`${KPM_S}\` |"
+            echo "| LTO | \`${LTO_MODE}\` |"
+            echo "| Image 大小 | ${IMG_SIZE} |"
+            echo "| 刷机包大小 | ${ZIP_SIZE} |"
+            echo ""
+            echo "### 产物在哪"
+            echo ""
+            echo "本页底部 **Artifacts** 区，名称 \`gki-${AV}-${KV}-${SUB}-${KSU}\`。"
+            echo "下载后解压，里面的 zip 是 AnyKernel3 刷机包。"
+            echo ""
+            echo "命令行取："
+            echo '```bash'
+            echo "gh run download ${{ github.run_id }} --repo ${{ github.repository }} --dir gki-out"
+            echo '```'
+            echo ""
+            echo "### 刷前先备份（没备份别动手）"
+            echo ""
+            echo '```bash'
+            echo 'adb shell su -c "dd if=/dev/block/bootdevice/by-name/boot of=/sdcard/boot_stock.img"'
+            echo 'adb pull /sdcard/boot_stock.img'
+            echo '```'
+            echo ""
+            echo "### 刷入"
+            echo ""
+            echo "Recovery 里刷 AnyKernel3 zip，或："
+            echo '```bash'
+            echo 'adb reboot bootloader'
+            echo 'fastboot flash boot Image'
+            echo 'fastboot reboot'
+            echo '```'
+            echo ""
+            echo "小米机型通常还要处理 vbmeta："
+            echo '```bash'
+            echo 'fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img'
+            echo '```'
+            echo ""
+            echo "### 卡开机动画了怎么办"
+            echo ""
+            echo "这是 GKI ABI 破坏导致的正常现象，**换槽位重新编译**："
+            echo ""
+            echo '| 这次用的 | 下次试 |'
+            echo '|---|---|'
+            echo '| `678` | `123` |'
+            echo '| `123` | `345` |'
+            echo '| `345` | 该机型可能不支持 Droidspaces |'
+            echo ""
+            echo "紧急处理：开机第一屏后**连按音量减 3 次**（按-松-按-松-按-松）"
+            echo "进 KernelSU 安全模式卸载问题模块；或 \`fastboot flash boot boot_stock.img\` 刷回。"
+            echo ""
+            echo "---"
+            echo "产物链接：$ART"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0

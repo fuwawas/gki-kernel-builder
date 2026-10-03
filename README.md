@@ -28,65 +28,104 @@ adb shell cat /proc/version
 Linux version 6.1.138-android14-11-...
 ```
 
-拆成三段记下来：
+拆成三段：
 
-| 输出里的 | 对应到工具里 |
-|---|---|
-| `android14` | Android 与内核大版本 → **Android 14 - 6.1** |
-| `6.1` | （同上，一起选） |
-| `138` | 子版本号 → 填 **138** |
+```
+Linux version 6.1.138-android14-11-...
+              │││     │
+              │││     └─ android14 → 表单第 1 项：Android 内核分支前缀
+              │└└── 138          → 表单第 3 项：子版本号（必填）
+              └─── 6.1           → 表单第 2 项：内核主线版本
+```
+
+| 输出里的这段 | 表单里对应的字段 | 填什么 |
+|---|---|---|
+| `android14` | Android 内核分支前缀 | `android14` |
+| `6.1` | 内核主线版本 | `6.1` |
+| `138` | 子版本号 | `138` |
+
+懒得记就只看一个字串：`6.1.138` → 表单填 `android14` + `6.1` + `138`。
+
+> ⚠️ **子版本号必须和手机上完全一致**，错一位就是刷入黑屏/不开机。
+> `138` 和 `157` 是两个不同的东西，别凭印象填。
 
 ---
 
-## 一、三步开始（Windows，推荐云端）
+## 一、准备工作（只做一次，约 1 分钟）
 
-### 第 1 步：把本仓库 Fork 到你自己的 GitHub 账号
+### 1. 把本仓库 Fork 到你自己的 GitHub 账号
 
-点本页右上角 **Fork** 按钮，其余全部保持默认（**仓库名别改**，改了脚本找不到）。
+点本页右上角 **Fork** 按钮，其余全部保持默认（**仓库名别改**，改了自动化会找不到）。
 
-> 为什么必须 Fork：编译是在 GitHub Actions 上跑的，得用**你自己账号下**的仓库，否则没有权限启动任务。
+> 为什么必须 Fork：编译是在 GitHub Actions 上跑的，得用**你自己账号下**的仓库，
+> 否则没有权限启动任务，配额也记在别人账上。
 
-#### ⚠️ Fork 之后必须手动开一次 Actions（不做这步一定失败）
+### 2. ⚠️ 手动启用 Actions（不做这步一定失败）
 
-GitHub 对 fork 来的仓库**默认禁用 Actions**，不手动开启的话，脚本会卡住或报 workflow 找不到。
+GitHub 对 fork 来的仓库**默认禁用 Actions**。
 
-操作：打开你自己仓库的 **Actions** 标签页 → 看到黄色提示条 → 点绿色按钮
+操作：进你自己仓库的 **Actions** 标签页 → 看到黄色提示条 → 点绿色按钮
 **「I understand my workflows, go ahead and enable them」**。
 
 只做一次，之后再编译就不用管了。
 
-### 第 2 步：安装并登录 gh
-
-1. 下载安装：https://cli.github.com
-2. 打开 PowerShell 或 cmd，执行：
-   ```
-   gh auth login
-   ```
-   一路回车，用浏览器登录即可
-
-### 第 3 步：双击运行
-
-下载这两个文件到**同一个文件夹**：
-
-- `启动编译.bat`
-- `build-gki.ps1`
-
-双击 `启动编译.bat`，按菜单提示选版本就行。
-
-> 脚本会自动读取你 gh 登录的用户名，拼出 `你的用户名/gki-kernel-builder`，
-> **前提是你 Fork 时没改仓库名**。改了的话，在主菜单选 `5` 手动填一下。
-
 ---
 
-## 二、用 Linux / WSL 的朋友
+## 二、三种用法，挑最省事的
 
-本地编译不用 Fork，也不用 gh，直接一条命令：
+### 🟢 方案 A：纯网页点两下（推荐，零安装零命令行）
+
+准备做完之后，**不用装任何东西**，一个浏览器就够，手机浏览器也行。
+
+1. 打开你自己 fork 的仓库 → **Actions** 标签页
+2. 左侧列表点 **Build GKI Kernel (Droidspaces)**
+3. 右上角点 **Run workflow** ▾ 展开下拉框
+4. 按下表填（大部分留默认就行），点绿色 **Run workflow** 按钮
+
+| 字段 | 怎么填 |
+|---|---|
+| `Android 内核分支前缀` | 看下面对照表，一般 `android14` |
+| `内核主线版本` | 一般 `6.1` |
+| `子版本号` | **必填**。手机 `adb shell cat /proc/version` 里第三段数字，如 `138` |
+| `内置 root 方案` | `ReSukiSU`（推荐）/ `None` / `Official` |
+| `Droidspaces 槽位` | `678`（先试这个） |
+| `CVE-2026-43499 修复链` | 勾上 |
+| `ZRAM LZ4KD` | 别勾，作者不推荐 |
+| `LTO 模式` | `thin` 稳妥（约 30–50 分钟）；想快选 `none`（约 20–30 分钟，体积大） |
+| 其余 | 全部留默认 |
+
+5. 等 30 分钟左右刷新页面。**跑完在 run 页面中部会直接显示回显参数 + 复制即用的刷机命令**，
+   不用去翻 Artifacts。
+
+### 🟡 方案 B：Windows 双击（适合反复编译）
+
+比方案 A 多一步，但能自动帮你下载产物。
+
+1. 装 [gh CLI](https://cli.github.com) → 命令行执行 `gh auth login`（一路回车，浏览器登录）
+2. 把 `启动编译.bat` 和 `build-gki.ps1` 下载到**同一个文件夹**
+3. 双击 `启动编译.bat`，按菜单选版本
+
+> 脚本会自动用你 gh 登录的用户名拼出 `你的用户名/gki-kernel-builder`。
+> Fork 时改了仓库名的话，主菜单选 `5` 手动填。
+
+### 🔵 方案 C：Linux / WSL 命令行（还能本机编译）
+
+云端跑：**不用 Fork，不用 gh**，一条命令：
 
 ```bash
 curl -sL -o gkibuild.sh https://raw.githubusercontent.com/fuwawas/gki-kernel-builder/main/gkibuild.sh
 chmod +x gkibuild.sh
 ./gkibuild.sh
 ```
+
+本机跑（需要 WSL/Ubuntu，联网拉约 2.2GB 源码）：
+
+```bash
+./gkibuild.sh -v android14-6.1-138          # 命令行直编
+./gkibuild.sh --list                        # 查看支持的所有版本
+```
+
+不带参数运行会进交互式向导：选大版本 → 选子版本 → 选 root → 选槽位 → 开始。
 
 > 国内网络拉不动 `raw.githubusercontent.com` 的话，用镜像：
 > `https://ghproxy.net/https://raw.githubusercontent.com/fuwawas/gki-kernel-builder/main/gkibuild.sh`
