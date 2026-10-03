@@ -3,10 +3,14 @@
 给 Android 手机编译带 **Droidspaces 容器支持** 和 **内置 root** 的 GKI 内核。
 
 - **云端编译**：编译在 GitHub 的服务器上跑，你电脑只负责点选，不需要装 Linux
-- **本地编译**：如果你电脑有 WSL / Ubuntu，也可以在本机编译
+- **本地编译**：有机子在跑 Linux / WSL / Docker 的话，也能在本机编
+- **源码会缓存**：第一次拉约 2.2GB，之后重编（比如换槽位）不用再下载
 
 原始脚本来自 [404-GCross/Droidspaces_GKI_Buildin_Local](https://github.com/404-GCross/Droidspaces_GKI_Buildin_Local)，
 本仓库做了非交互式改造（原脚本是纯交互菜单，无法自动化）。
+
+> **不想看网页版说明？** 仓库里有 `开始之前先看我.md`（完整离线教程）
+> 和 `快速指引.txt`（Windows 双击就能看的精简版）。下载整包的话看这两个就行。
 
 ---
 
@@ -71,7 +75,18 @@ GitHub 对 fork 来的仓库**默认禁用 Actions**。
 
 ---
 
-## 二、三种用法，挑最省事的
+## 二、四种用法，挑最省事的
+
+| 你的情况 | 用哪个 | 本机要装什么 |
+|---|---|---|
+| 有 GitHub 账号，不想折腾环境 | **🟢 方案 A：纯网页** | 什么都不用装 |
+| 纯 Windows，想懂更多操作 | 🟡 方案 B：Windows 双击 | gh CLI |
+| 有 WSL / Linux | 🔵 方案 C：命令行 | 依赖由脚本自动装 |
+| 有 Docker，不想污染本机环境 | 🟣 方案 D：Docker | Docker |
+| Windows 且没 WSL 没 Docker | 只能选 A | — |
+
+> **`gkibuild.sh` 是自举的**：它会自己 clone 编译工具、自己下载内核源码，
+> 所以方案 C 只拿这一个文件也能跑，不必 clone 整个仓库。
 
 ### 🟢 方案 A：纯网页点两下（推荐，零安装零命令行）
 
@@ -126,6 +141,28 @@ chmod +x gkibuild.sh
 ```
 
 不带参数运行会进交互式向导：选大版本 → 选子版本 → 选 root → 选槽位 → 开始。
+
+源码和工具缓存在 `~/.cache/gkibuild`；**换槽位重编不会再重新下载源码**。
+想换个位置（比如系统盘紧张）：
+
+```bash
+./gkibuild.sh -v android14-6.1-138 --cache-dir /mnt/d/kernel-cache
+```
+
+如果你就是在 clone 下来的本仓库目录里运行，脚本会直接复用仓库里自带的
+`build_kernel.sh` / `config` / 补丁，**不会再 clone 一份**。
+
+### 🟣 方案 D：Docker（本机不装编译依赖）
+
+```bash
+./docker-run.sh -v android14-6.1-138
+```
+
+不带参数进交互式向导。产物落在当前目录 `gki-out/`。
+
+> 要求：≥ 4 核、≥ 16GB 内存、≥ 40GB 可用磁盘。
+> **Docker Desktop 用户先去 Settings → Resources 把内存调到 8GB 以上**，
+> 默认 2GB 一定编译失败。
 
 > 国内网络拉不动 `raw.githubusercontent.com` 的话，用镜像：
 > `https://ghproxy.net/https://raw.githubusercontent.com/fuwawas/gki-kernel-builder/main/gkibuild.sh`
@@ -211,11 +248,19 @@ PowerShell 里执行 `gh auth login`。
 说明你 gh 登录的账号和 Fork 到的账号不是同一个，或者仓库是私有可见性。
 `gh auth status` 看当前登录账号。
 
+**Q：换槽位重编，还要再下载那 2.2GB 吗？**
+不用。源码缓存在 `~/.cache/gkibuild`（或你 `--cache-dir` 指定的位置），
+第二次开始直接复用。
+
+**Q：Docker 编译跑到一半被杀 / 报内存不足？**
+Docker Desktop 默认只给 2GB，不够。Settings → Resources → Memory 调到 8GB 以上。
+
 **Q：编译要多久？**
-云端约 45-60 分钟。跑完在 Actions 页面底部 Artifacts 下载。
+云端约 30-50 分钟（LTO=thin）。本机看 CPU 核数，一般 30-60 分钟。
+选 `--lto none` 能快一档，代价是镜像体积变大。
 
 **Q：免费额度够吗？**
-GitHub 免费账号每月 2000 分钟 Actions 时长，一次编译约 50 分钟，一个月能编 40 次左右。
+GitHub 免费账号每月 2000 分钟 Actions 时长，一次编译约 30-50 分钟，一个月能编几十次。
 
 ---
 
@@ -223,9 +268,13 @@ GitHub 免费账号每月 2000 分钟 Actions 时长，一次编译约 50 分钟
 
 | 文件 | 用途 |
 |---|---|
+| `开始之前先看我.md` | **完整离线教程**，不想看网页就看这个 |
+| `快速指引.txt` | 精简版，Windows 双击即可查看 |
 | `启动编译.bat` | Windows 双击入口（纯英文，规避中文 bat 的编码坑） |
-| `build-gki.ps1` | Windows 端菜单程序，负责选版本 + 调 gh/wsl |
-| `gkibuild.sh` | Linux / WSL 端一键脚本（向导 + 命令行两种模式） |
+| `build-gki.ps1` | Windows 端菜单程序，负责选版本 + 调 gh |
+| `gkibuild.sh` | Linux / WSL 端一键脚本（自举 + 向导 + 命令行三种用法） |
+| `docker-run.sh` | Docker 一键编译，本机不用装任何依赖 |
+| `Dockerfile` | Docker 镜像定义（含 bazelisk） |
 | `.github/workflows/build-gki.yml` | 云端编译工作流 |
 
 脚本部分遵循 GPL v2，版权归原作者 404-GCross。内核源码、KernelSU 等组件各自遵循其原始许可证。
