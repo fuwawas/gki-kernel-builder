@@ -18,6 +18,7 @@ AV=""; KV=""; SUB=""; VERSION=""
 MIRROR=""; KSU="ReSukiSU"; SLOT="678"; KSU_BRANCH="Stable(标准)"
 CVE="true"; ZRAM="false"; KPM="false"; LTO="thin"
 OUTDIR=""; MODE="local"; WAIT="false"; INSTALL_DEPS="true"
+CACHE_DIR="${GKI_CACHE_DIR:-$HOME/.cache/gkibuild}"
 
 C_GREEN=$'\033[32m'; C_RED=$'\033[31m'; C_YELLOW=$'\033[33m'
 C_CYAN=$'\033[36m'; C_BOLD=$'\033[1m'; C_OFF=$'\033[0m'
@@ -215,6 +216,9 @@ wizard() {
     printf '  CVE / ZRAM / KPM : %s / %s / %s\n' "$CVE" "$ZRAM" "$KPM"
     printf '  LTO         : %s\n' "$LTO"
     printf '  编译方式    : %s\n' "$MODE"
+    if [[ "$MODE" == "local" ]]; then
+        printf '  缓存目录    : %s（重编会复用源码）\n' "$CACHE_DIR"
+    fi
     printf '  产物目录    : %s\n' "$OUTDIR"
     echo
     yn "确认无误，开始执行?" y || { echo "已取消"; exit 0; }
@@ -231,6 +235,12 @@ usage() {
   ./gkibuild.sh -v android15-6.6-127 -s 123 指定槽位
   ./gkibuild.sh -v android14-6.1-157 --cloud --wait
   ./gkibuild.sh --list                      列出支持的版本
+
+本地编译相关:
+  --cache-dir <路径>      源码与工具缓存目录（默认 ~/.cache/gkibuild）
+                          第二次编译会复用已下载的源码，不再重拉 2.2GB
+  --out <路径>            产物输出目录（默认 ./gki-out）
+  --no-deps               跳过依赖安装检查
 EOF
     exit 0
 }
@@ -243,6 +253,7 @@ if [[ $# -gt 0 ]]; then
             -s|--slot)    SLOT="$2";    shift 2 ;;
             -m|--mirror)  MIRROR="$2";  shift 2 ;;
             -o|--out)     OUTDIR="$2";  shift 2 ;;
+            --cache-dir)  CACHE_DIR="$2"; shift 2 ;;
             --lto)        LTO="$2";     shift 2 ;;
             --tag)        SRC_TAG="$2"; shift 2 ;;
             --cloud-repo) GKI_ACTIONS_REPO="$2"; shift 2 ;;
@@ -334,6 +345,10 @@ fi
 [[ "$(uname -s)" == "Linux" ]] || die "本地模式需要 Linux / WSL；Windows 请选云端模式"
 
 if [[ "$INSTALL_DEPS" == "true" ]]; then
+    # root（含 Docker 容器）里没有 sudo，且 sudo 本身也用不上
+    SUDO="sudo"
+    if [[ "$(id -u)" -eq 0 ]] || ! command -v sudo >/dev/null 2>&1; then SUDO=""; fi
+
     log "检查依赖"
     MISSING=()
     for c in git curl clang lld cpio python3 zstd tar; do
@@ -342,14 +357,14 @@ if [[ "$INSTALL_DEPS" == "true" ]]; then
     if [[ ${#MISSING[@]} -gt 0 ]]; then
         warn "缺少: ${MISSING[*]}"
         if   command -v apt-get >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y git curl make gcc g++ build-essential libssl-dev bison flex \
+            $SUDO apt-get update -qq
+            $SUDO apt-get install -y git curl make gcc g++ build-essential libssl-dev bison flex \
                 libelf-dev dwarves ccache python3 clang lld bc rsync cpio perl patch zip gawk zstd
         elif command -v dnf >/dev/null 2>&1; then
-            sudo dnf install -y git curl make gcc gcc-c++ openssl-devel bison flex \
+            $SUDO dnf install -y git curl make gcc gcc-c++ openssl-devel bison flex \
                 elfutils-libelf-devel dwarves ccache python3 clang lld bc rsync cpio perl patch zip gawk zstd tar
         elif command -v pacman >/dev/null 2>&1; then
-            sudo pacman -S --needed --noconfirm git curl make gcc base-devel openssl bison flex \
+            $SUDO pacman -S --needed --noconfirm git curl make gcc base-devel openssl bison flex \
                 libelf dwarves ccache python clang lld bc rsync cpio perl zip zstd
         else
             die "请手动安装: ${MISSING[*]}"
@@ -375,14 +390,24 @@ if [[ -z "$MIRROR" ]]; then
     [[ -n "$MIRROR" ]] && ok "选用 $MIRROR" || warn "镜像均不可用，改为直连"
 fi
 
-WORKROOT="$HOME/.cache/gkibuild"
+WORKROOT="$CACHE_DIR"
+mkdir -p "$WORKROOT"
+
+# 本地优先：如果本脚本就躺在已 clone 的仓库里，直接用仓库自带的工具，
+# 不再重复 clone 一份（省时间，也避免两边版本漂移）
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLDIR="$WORKROOT/Droidspaces_GKI_Buildin_Local"
-if [[ ! -f "$TOOLDIR/build_kernel.sh" ]]; then
-    log "获取编译工具"
-    mkdir -p "$WORKROOT"
-    git clone --depth 1 "https://github.com/${TOOL_REPO}.git" "$TOOLDIR" 2>/dev/null \
-        || git clone --depth 1 "${MIRROR}https://github.com/${TOOL_REPO}.git" "$TOOLDIR" \
-        || die "克隆失败，换一个 --mirror 试试"
+if [[ -f "$SELF_DIR/build_kernel.sh" && -d "$SELF_DIR/scripts" ]]; then
+    TOOLDIR="$SELF_DIR"
+    ok "复用当前仓库的编译工具：$TOOLDIR"
+else
+    if [[ ! -f "$TOOLDIR/build_kernel.sh" ]]; then
+        log "获取编译工具"
+        git clone --depth 1 "https://github.com/${TOOL_REPO}.git" "$TOOLDIR" 2>/dev/null \
+            || git clone --depth 1 "${MIRROR}https://github.com/${TOOL_REPO}.git" "$TOOLDIR" \
+            || die "克隆失败，换一个 --mirror 试试"
+    fi
+    ok "编译工具就绪：$TOOLDIR"
 fi
 chmod +x "$TOOLDIR/build_kernel.sh"
 
